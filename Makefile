@@ -26,6 +26,18 @@ TOOLS_SHELL="./hack/tools.sh"
 # golangci-lint
 LINTER := bin/golangci-lint
 
+# Find proto files (cross-platform compatible)
+ifneq ($(findstring MINGW,$(shell uname -s)),)
+	# Windows: use git-bash find command
+	Git_Bash=$(subst \,/,$(subst cmd\,bin\bash.exe,$(dir $(shell where git))))
+	API_PROTO_FILES=$(shell $(Git_Bash) -c "find api -name *.proto")
+	ERRORS_PROTO_FILES=$(shell $(Git_Bash) -c "find errors -name *.proto")
+else
+	# Unix-like systems (Linux, macOS)
+	API_PROTO_FILES=$(shell find api -name *.proto 2>/dev/null)
+	ERRORS_PROTO_FILES=$(shell find errors -name *.proto 2>/dev/null)
+endif
+
 # check GOBIN
 ifneq ($(GOBIN),)
 	BIN=$(GOBIN)
@@ -94,7 +106,55 @@ lint: $(LINTER)
 	@${TOOLS_SHELL} lint
 	@echo "lint check finished"
 
+.PHONY: api
+# generate api proto files
+api:
+	@if [ -z "$(API_PROTO_FILES)" ]; then \
+		echo "No proto files found in api directory"; \
+	else \
+		echo "Generating proto files: $(API_PROTO_FILES)"; \
+		protoc --proto_path=./api \
+		       --proto_path=./third_party \
+		       --go_out=paths=source_relative:./api \
+		       --go-grpc_out=paths=source_relative:./api \
+		       --go-http_out=paths=source_relative:./api \
+		       $(API_PROTO_FILES); \
+		echo "API proto files generated successfully"; \
+	fi
+
+.PHONY: errors-proto
+# generate errors proto files
+errors-proto:
+	@if [ -z "$(ERRORS_PROTO_FILES)" ]; then \
+		echo "No proto files found in errors directory"; \
+	else \
+		echo "Generating proto files: $(ERRORS_PROTO_FILES)"; \
+		protoc --proto_path=./errors \
+		       --proto_path=./third_party \
+		       --go_out=paths=source_relative:./errors \
+		       $(ERRORS_PROTO_FILES); \
+		echo "Errors proto files generated successfully"; \
+	fi
+
 .PHONY: proto
-proto:
-	protoc --proto_path=./api --proto_path=./third_party --go_out=paths=source_relative:./api --go-grpc_out=paths=source_relative:./api --go-http_out=paths=source_relative:./api metadata/metadata.proto
-	protoc --proto_path=./third_party --go_out=paths=source_relative:./errors/errors.proto
+# generate all proto files (api + errors)
+proto: api errors-proto
+	@echo "All proto files generated successfully"
+
+.PHONY: help
+# show help
+help:
+	@echo ''
+	@echo 'Usage:'
+	@echo ' make [target]'
+	@echo ''
+	@echo 'Targets:'
+	@awk '/^[a-zA-Z\-\_0-9]+:/ { \
+	helpMessage = match(lastLine, /^# (.*)/); \
+		if (helpMessage) { \
+			helpCommand = substr($$1, 0, index($$1, ":")); \
+			helpMessage = substr(lastLine, RSTART + 2, RLENGTH); \
+			printf "\033[36m%-22s\033[0m %s\n", helpCommand,helpMessage; \
+		} \
+	} \
+	{ lastLine = $$0 }' $(MAKEFILE_LIST)
